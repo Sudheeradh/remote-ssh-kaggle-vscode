@@ -47,6 +47,33 @@ else
   echo 'plugins=(git z zsh-syntax-highlighting zsh-autosuggestions)' > "$HOME/.zshrc"
 fi
 
+# --- 1b) CUDA env (nvidia-smi, nvcc, ncu, torch) for zsh ---
+# setup_cuda.sh is env-only (no apt/sudo): it fixes PATH/LD_LIBRARY_PATH for the
+# preinstalled CUDA 12.8 toolkit + driver binaries in /opt/bin on Kaggle.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+CUDA_SETUP="$SCRIPT_DIR/setup_cuda.sh"
+if [ -f "$CUDA_SETUP" ]; then
+  chmod +x "$CUDA_SETUP" || true
+  # Persist for future zsh sessions (idempotent, ~/.zshrc only).
+  # --quiet --no-verify keeps new-shell startup instant (no torch import per prompt).
+  if ! grep -Fq "cuda-setup (Kaggle)" "$HOME/.zshrc" 2>/dev/null; then
+    {
+      echo ''
+      echo '# >>> cuda-setup (Kaggle) >>>'
+      echo "[ -f \"$CUDA_SETUP\" ] && source \"$CUDA_SETUP\" --quiet --no-verify"
+      echo '# <<< cuda-setup (Kaggle) <<<'
+    } >> "$HOME/.zshrc"
+    echo "CUDA env wired into ~/.zshrc."
+  else
+    echo "CUDA env already wired into ~/.zshrc."
+  fi
+  # Also configure the current session (best-effort; never fail the install).
+  # shellcheck disable=SC1090
+  source "$CUDA_SETUP" --quiet --no-verify || true
+else
+  echo "WARNING: $CUDA_SETUP not found, skipping CUDA zsh wiring."
+fi
+
 # Make zsh the default shell
 ZSH_PATH="$(command -v zsh)"
 if [ "$SHELL" != "$ZSH_PATH" ]; then
@@ -64,7 +91,7 @@ if ! command -v opencode &> /dev/null; then
   curl -fsSL https://opencode.ai/install | bash
 else
   echo "opencode already installed."
-fi
+fix
 
 # Add opencode to PATH in zsh (idempotent)
 for BINDIR in "$HOME/.opencode/bin" "$HOME/.local/bin"; do
