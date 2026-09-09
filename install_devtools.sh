@@ -1,8 +1,19 @@
 #!/bin/bash
 #
-# Install dev tools: zsh + plugins, opencode, htop/nvtop, fix .so symlinks
+# Install dev tools: fix .so symlinks, zsh + plugins, opencode, htop/nvtop
 #
 set -e
+
+# --- 0) Fix versioned .so files then ldconfig (must run first: broken .so breaks apt/dpkg) ---
+sudo bash -c '
+for file in /usr/local/lib/*.so.*; do
+  # If it is a regular file and NOT a symbolic link
+  if [ -f "$file" ] && [ ! -L "$file" ]; then
+    mv "$file" "${file}.1"
+  fi
+done
+ldconfig
+'
 
 sudo apt update --allow-releaseinfo-change
 sudo apt install -y zsh git curl wget htop nvtop
@@ -91,7 +102,7 @@ if ! command -v opencode &> /dev/null; then
   curl -fsSL https://opencode.ai/install | bash
 else
   echo "opencode already installed."
-fix
+fi
 
 # Add opencode to PATH in zsh (idempotent)
 for BINDIR in "$HOME/.opencode/bin" "$HOME/.local/bin"; do
@@ -107,16 +118,5 @@ export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
 # --- 3) htop and nvtop already installed above via apt ---
 echo "htop version: $(htop --version 2>&1 | head -n1 || true)"
 command -v nvtop &> /dev/null && echo "nvtop installed: $(command -v nvtop)" || echo "WARNING: nvtop binary not found after apt install."
-
-# --- 4) Fix versioned .so files then ldconfig ---
-sudo bash -c '
-for file in /usr/local/lib/*.so.*; do
-  # If it is a regular file and NOT a symbolic link
-  if [ -f "$file" ] && [ ! -L "$file" ]; then
-    mv "$file" "${file}.1"
-  fi
-done
-ldconfig
-'
 
 echo "Done. Restart shell or run: exec zsh"
