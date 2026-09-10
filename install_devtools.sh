@@ -114,16 +114,64 @@ if [ -d "/kaggle/working" ]; then
 
   if [ -x "$OPENCODE_PERSIST_BIN" ]; then
     echo "opencode already installed in persistent dir ($OPENCODE_PERSIST_BIN), reusing."
-  elif ! command -v opencode &> /dev/null; then
-    echo "Installing opencode to persistent dir ($OPENCODE_PERSIST_DIR)..."
-    HOME=/kaggle/working curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
   else
-    echo "opencode already installed ($(command -v opencode))."
+    # Migrate a previous ephemeral install ($HOME/.opencode/bin as a real dir
+    # from older script versions) into persistent storage before downloading.
+    if [ -x "$HOME/.opencode/bin/opencode" ]; then
+      echo "Migrating existing $HOME/.opencode/bin/opencode to $OPENCODE_PERSIST_DIR..."
+      mkdir -p "$OPENCODE_PERSIST_DIR"
+      cp -an "$HOME/.opencode/bin/." "$OPENCODE_PERSIST_DIR/" 2>/dev/null || \
+        cp -a "$HOME/.opencode/bin/." "$OPENCODE_PERSIST_DIR/"
+      chmod +x "$OPENCODE_PERSIST_BIN" 2>/dev/null || true
+    fi
+    if [ -x "$OPENCODE_PERSIST_BIN" ]; then
+      echo "opencode migrated to persistent dir ($OPENCODE_PERSIST_BIN), reusing."
+    elif ! command -v opencode &> /dev/null; then
+      echo "Installing opencode to persistent dir ($OPENCODE_PERSIST_DIR)..."
+      # NOTE: `HOME=X curl ... | bash` would scope HOME to curl only, leaving
+      # the installer with the old HOME. Download first, then run the installer
+      # with HOME pointed at persistent storage (installer hardcodes
+      # INSTALL_DIR=$HOME/.opencode/bin, no env override).
+      _OPENCODE_INSTALLER="$(mktemp)"
+      curl -fsSL https://opencode.ai/install -o "$_OPENCODE_INSTALLER"
+      HOME=/kaggle/working bash "$_OPENCODE_INSTALLER" --no-modify-path
+      rm -f "$_OPENCODE_INSTALLER"
+      # Safety net: if the installer still landed in $HOME (e.g. future
+      # installer change ignoring HOME), migrate it into persistent storage.
+      if [ ! -x "$OPENCODE_PERSIST_BIN" ] && [ -x "$HOME/.opencode/bin/opencode" ]; then
+        echo "Installer landed in $HOME/.opencode/bin, migrating to persistent dir..."
+        mkdir -p "$OPENCODE_PERSIST_DIR"
+        cp -a "$HOME/.opencode/bin/." "$OPENCODE_PERSIST_DIR/"
+        chmod +x "$OPENCODE_PERSIST_BIN" 2>/dev/null || true
+      fi
+    else
+      echo "opencode already installed ($(command -v opencode)), migrating to persistent dir..."
+      mkdir -p "$OPENCODE_PERSIST_DIR"
+      cp -an "$(dirname "$(command -v opencode)")/." "$OPENCODE_PERSIST_DIR/" 2>/dev/null || true
+      chmod +x "$OPENCODE_PERSIST_BIN" 2>/dev/null || true
+    fi
   fi
 
   # Compat symlink: tools expecting the default $HOME/.opencode/bin keep working.
+  # A real dir here means an older script version installed ephemerally; its
+  # contents are migrated above, so replacing it with a symlink is safe.
+  # (Only skip if migration failed and the real dir still holds the binary.)
   if [ -e "$HOME/.opencode/bin" ] && [ ! -L "$HOME/.opencode/bin" ]; then
-    echo "WARNING: $HOME/.opencode/bin exists as a real dir, leaving it in place."
+    if [ -x "$OPENCODE_PERSIST_BIN" ]; then
+      rm -rf "$HOME/.opencode/bin"
+      mkdir -p "$HOME/.opencode"
+      ln -sfn "$OPENCODE_PERSIST_DIR" "$HOME/.opencode/bin"
+      echo "Replaced ephemeral $HOME/.opencode/bin with symlink to $OPENCODE_PERSIST_DIR."
+    else
+      echo "WARNING: $HOME/.opencode/bin exists as a real dir and persistent install is missing; leaving it in place."
+      if ! grep -Fq "$HOME/.opencode/bin" "$HOME/.zshrc" 2>/dev/null; then
+        echo "export PATH=\"$HOME/.opencode/bin:\$PATH\"" >> "$HOME/.zshrc"
+      fi
+      case ":$PATH:" in
+        *":$HOME/.opencode/bin:"*) ;;
+        *) export PATH="$HOME/.opencode/bin:$PATH" ;;
+      esac
+    fi
   else
     mkdir -p "$HOME/.opencode"
     ln -sfn "$OPENCODE_PERSIST_DIR" "$HOME/.opencode/bin"
