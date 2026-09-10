@@ -96,24 +96,75 @@ else
   echo "zsh is already the default shell."
 fi
 
-# --- 2) opencode ---
-if ! command -v opencode &> /dev/null; then
-  echo "Installing opencode..."
-  curl -fsSL https://opencode.ai/install | bash
+# --- 2) opencode (persistent in /kaggle/working) ---
+# Kaggle gives a fresh system disk every session, but /kaggle/working persists.
+# The upstream installer hardcodes INSTALL_DIR=$HOME/.opencode/bin with no env
+# override, so we install with HOME=/kaggle/working (+ --no-modify-path) to land
+# the binary in persistent storage, then symlink + wire PATH on every boot.
+OPENCODE_PERSIST_DIR="/kaggle/working/.opencode/bin"
+OPENCODE_PERSIST_BIN="$OPENCODE_PERSIST_DIR/opencode"
+
+if [ -d "/kaggle/working" ]; then
+  # Prepend persistent dir first so a reused binary is found on fresh boots
+  # where $HOME/.opencode/bin does not exist yet.
+  case ":$PATH:" in
+    *":$OPENCODE_PERSIST_DIR:"*) ;;
+    *) export PATH="$OPENCODE_PERSIST_DIR:$PATH" ;;
+  esac
+
+  if [ -x "$OPENCODE_PERSIST_BIN" ]; then
+    echo "opencode already installed in persistent dir ($OPENCODE_PERSIST_BIN), reusing."
+  elif ! command -v opencode &> /dev/null; then
+    echo "Installing opencode to persistent dir ($OPENCODE_PERSIST_DIR)..."
+    HOME=/kaggle/working curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
+  else
+    echo "opencode already installed ($(command -v opencode))."
+  fi
+
+  # Compat symlink: tools expecting the default $HOME/.opencode/bin keep working.
+  if [ -e "$HOME/.opencode/bin" ] && [ ! -L "$HOME/.opencode/bin" ]; then
+    echo "WARNING: $HOME/.opencode/bin exists as a real dir, leaving it in place."
+  else
+    mkdir -p "$HOME/.opencode"
+    ln -sfn "$OPENCODE_PERSIST_DIR" "$HOME/.opencode/bin"
+  fi
+
+  # Add persistent dir to PATH in zsh (idempotent)
+  if ! grep -Fq "$OPENCODE_PERSIST_DIR" "$HOME/.zshrc" 2>/dev/null; then
+    echo "export PATH=\"$OPENCODE_PERSIST_DIR:\$PATH\"" >> "$HOME/.zshrc"
+  fi
+  # Also export for current session
+  case ":$PATH:" in
+    *":$OPENCODE_PERSIST_DIR:"*) ;;
+    *) export PATH="$OPENCODE_PERSIST_DIR:$PATH" ;;
+  esac
 else
-  echo "opencode already installed."
+  # Non-Kaggle fallback: default ephemeral install.
+  if ! command -v opencode &> /dev/null; then
+    echo "Installing opencode..."
+    curl -fsSL https://opencode.ai/install | bash
+  else
+    echo "opencode already installed."
+  fi
+
+  # Add opencode to PATH in zsh (idempotent)
+  for BINDIR in "$HOME/.opencode/bin" "$HOME/.local/bin"; do
+    if [ -d "$BINDIR" ] || [ "$BINDIR" = "$HOME/.opencode/bin" ]; then
+      if ! grep -q "$BINDIR" "$HOME/.zshrc" 2>/dev/null; then
+        echo "export PATH=\"$BINDIR:\$PATH\"" >> "$HOME/.zshrc"
+      fi
+    fi
+  done
+  # Also export for current session
+  export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
 fi
 
-# Add opencode to PATH in zsh (idempotent)
-for BINDIR in "$HOME/.opencode/bin" "$HOME/.local/bin"; do
-  if [ -d "$BINDIR" ] || [ "$BINDIR" = "$HOME/.opencode/bin" ]; then
-    if ! grep -q "$BINDIR" "$HOME/.zshrc" 2>/dev/null; then
-      echo "export PATH=\"$BINDIR:\$PATH\"" >> "$HOME/.zshrc"
-    fi
-  fi
-done
-# Also export for current session
-export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+# Verify
+if command -v opencode &> /dev/null; then
+  echo "opencode: $(command -v opencode) ($(opencode --version 2>&1 | head -n1 || true))"
+else
+  echo "WARNING: opencode binary not found after install."
+fi
 
 # --- 3) htop and nvtop already installed above via apt ---
 echo "htop version: $(htop --version 2>&1 | head -n1 || true)"
